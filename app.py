@@ -1,349 +1,422 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import requests
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import plotly.express as px
+import ta
 from datetime import datetime, timedelta
 import time
-
-# Importar módulos propios
-from data.crypto_data import CryptoDataFetcher
-from models.trading_model import TradingModel
-from config.settings import CRYPTO_SYMBOLS, MODEL_CONFIG, UI_CONFIG
+import sqlite3
+import json
 
 # Configuración de la página
 st.set_page_config(
-    page_title="Crypto Trading Model",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="Crypto Trading Signal Model",
+    page_icon="📈",
+    layout="wide"
 )
 
-# CSS personalizado
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
-        color: #1f77b4;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    .metric-card {
-        background-color: #f0f2f6;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        border-left: 4px solid #1f77b4;
-    }
-    .signal-buy {
-        color: #28a745;
-        font-weight: bold;
-        font-size: 1.2rem;
-    }
-    .signal-sell {
-        color: #dc3545;
-        font-weight: bold;
-        font-size: 1.2rem;
-    }
-    .signal-neutral {
-        color: #ffc107;
-        font-weight: bold;
-        font-size: 1.2rem;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-@st.cache_data(ttl=21600)  # Cache por 6 horas
-def load_crypto_data():
-    """Cargar datos de criptomonedas con cache"""
-    fetcher = CryptoDataFetcher()
-    data = {}
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    for i, symbol in enumerate(CRYPTO_SYMBOLS):
-        status_text.text(f'Cargando datos de {symbol.upper()}...')
-        try:
-            df = fetcher.get_historical_data(symbol, days=MODEL_CONFIG['historical_days'])
-            if df is not None and not df.empty:
-                data[symbol] = df
-        except Exception as e:
-            st.warning(f"Error cargando {symbol}: {str(e)}")
+class CryptoTradingModel:
+    def __init__(self):
+        self.coins = ['bitcoin', 'ethereum', 'binancecoin', 'ripple']
+        self.coin_symbols = {
+            'bitcoin': 'BTC',
+            'ethereum': 'ETH', 
+            'binancecoin': 'BNB',
+            'ripple': 'XRP'
+        }
+        self.weights = {
+            'rsi': 0.20,
+            'macd': 0.25,
+            'bb': 0.15,
+            'ema': 0.20,
+            'volume': 0.10,
+            'volatility': 0.10
+        }
         
-        progress_bar.progress((i + 1) / len(CRYPTO_SYMBOLS))
-    
-    status_text.empty()
-    progress_bar.empty()
-    
-    return data
-
-@st.cache_data(ttl=21600)
-def calculate_signals(data):
-    """Calcular señales de trading con cache"""
-    model = TradingModel()
-    signals = {}
-    
-    for symbol, df in data.items():
-        if df is not None and len(df) >= MODEL_CONFIG['min_periods']:
-            try:
-                signal_data = model.generate_signal(df)
-                signals[symbol] = signal_data
-            except Exception as e:
-                st.error(f"Error calculando señales para {symbol}: {str(e)}")
-    
-    return signals
-
-def display_signal_card(symbol, signal_data):
-    """Mostrar tarjeta de señal individual"""
-    if signal_data is None:
-        st.error(f"No hay datos disponibles para {symbol.upper()}")
-        return
-    
-    signal = signal_data['signal']
-    index_value = signal_data['index']
-    confidence = signal_data['confidence']
-    
-    # Color según señal
-    if signal == 'COMPRA':
-        signal_class = 'signal-buy'
-        emoji = "🟢"
-    elif signal == 'VENTA':
-        signal_class = 'signal-sell'
-        emoji = "🔴"
-    else:
-        signal_class = 'signal-neutral'
-        emoji = "🟡"
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
-    with col1:
-        st.markdown(f"### {emoji} {symbol.upper()}")
-    
-    with col2:
-        st.markdown(f'<p class="{signal_class}">{signal}</p>', unsafe_allow_html=True)
-        st.metric("Índice", f"{index_value:.1f}", f"{confidence:.1f}%")
-    
-    with col3:
-        # Mini indicadores
-        metrics = signal_data.get('metrics', {})
-        if metrics:
-            st.write("**Métricas Clave:**")
-            st.write(f"RSI: {metrics.get('rsi', 0):.1f}")
-            st.write(f"MACD: {metrics.get('macd_signal', 0):.3f}")
-
-def create_index_chart(signals):
-    """Crear gráfico de índices"""
-    fig = go.Figure()
-    
-    symbols = list(signals.keys())
-    indices = [signals[s]['index'] if signals[s] else 0 for s in symbols]
-    colors = []
-    
-    for s in symbols:
-        if signals[s]:
-            signal = signals[s]['signal']
-            if signal == 'COMPRA':
-                colors.append('#28a745')
-            elif signal == 'VENTA':
-                colors.append('#dc3545')
+    @st.cache_data(ttl=300)  # Cache por 5 minutos
+    def fetch_price_data(_self, coin_id, days=30):
+        """Obtiene datos históricos de precios"""
+        try:
+            url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
+            params = {
+                'vs_currency': 'usd',
+                'days': days,
+                'interval': 'daily'
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Convertir a DataFrame
+                prices = pd.DataFrame(data['prices'], columns=['timestamp', 'price'])
+                volumes = pd.DataFrame(data['total_volumes'], columns=['timestamp', 'volume'])
+                
+                prices['timestamp'] = pd.to_datetime(prices['timestamp'], unit='ms')
+                volumes['timestamp'] = pd.to_datetime(volumes['timestamp'], unit='ms')
+                
+                df = pd.merge(prices, volumes, on='timestamp')
+                df.set_index('timestamp', inplace=True)
+                df.sort_index(inplace=True)
+                
+                return df
             else:
-                colors.append('#ffc107')
-        else:
-            colors.append('#6c757d')
+                st.error(f"Error al obtener datos para {coin_id}: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            st.error(f"Error de conexión para {coin_id}: {str(e)}")
+            return None
     
-    fig.add_trace(go.Bar(
-        x=[s.upper() for s in symbols],
-        y=indices,
-        marker_color=colors,
-        text=[f"{idx:.1f}" for idx in indices],
-        textposition='auto',
-    ))
+    def calculate_technical_indicators(self, df):
+        """Calcula todos los indicadores técnicos"""
+        if df is None or len(df) < 20:
+            return None
+            
+        try:
+            # RSI
+            df['rsi'] = ta.momentum.RSIIndicator(df['price'], window=14).rsi()
+            
+            # MACD
+            macd = ta.trend.MACD(df['price'])
+            df['macd'] = macd.macd()
+            df['macd_signal'] = macd.macd_signal()
+            df['macd_histogram'] = macd.macd_diff()
+            
+            # Bollinger Bands
+            bb = ta.volatility.BollingerBands(df['price'], window=20)
+            df['bb_upper'] = bb.bollinger_hband()
+            df['bb_lower'] = bb.bollinger_lband()
+            df['bb_middle'] = bb.bollinger_mavg()
+            df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['bb_middle']
+            
+            # EMAs
+            df['ema_12'] = ta.trend.EMAIndicator(df['price'], window=12).ema_indicator()
+            df['ema_26'] = ta.trend.EMAIndicator(df['price'], window=26).ema_indicator()
+            
+            # Volume
+            df['volume_sma'] = df['volume'].rolling(window=10).mean()
+            df['volume_ratio'] = df['volume'] / df['volume_sma']
+            
+            # Volatilidad
+            df['returns'] = df['price'].pct_change()
+            df['volatility'] = df['returns'].rolling(window=10).std() * np.sqrt(365)
+            
+            return df
+            
+        except Exception as e:
+            st.error(f"Error calculando indicadores: {str(e)}")
+            return None
     
-    # Líneas de referencia
-    fig.add_hline(y=65, line_dash="dash", line_color="green", annotation_text="Umbral Compra (65)")
-    fig.add_hline(y=35, line_dash="dash", line_color="red", annotation_text="Umbral Venta (35)")
-    fig.add_hline(y=50, line_dash="dot", line_color="gray", annotation_text="Neutral (50)")
-    
-    fig.update_layout(
-        title="Índices de Trading por Criptomoneda",
-        yaxis_title="Índice (0-100)",
-        xaxis_title="Criptomoneda",
-        height=400,
-        showlegend=False
-    )
-    
-    return fig
+    def generate_signals(self, df):
+        """Genera señales de trading basadas en indicadores ponderados"""
+        if df is None:
+            return None
+            
+        try:
+            # Normalizar indicadores a escala -100 a +100
+            signals = pd.DataFrame(index=df.index)
+            
+            # RSI Signal (30-70 range optimal)
+            rsi_signal = np.where(df['rsi'] < 30, 100,  # Oversold = Buy
+                         np.where(df['rsi'] > 70, -100,  # Overbought = Sell
+                                 (50 - df['rsi']) * 2))  # Linear scaling
+            signals['rsi_signal'] = rsi_signal
+            
+            # MACD Signal
+            macd_signal = np.where(df['macd'] > df['macd_signal'], 
+                                  np.minimum(df['macd_histogram'] * 1000, 100),
+                                  np.maximum(df['macd_histogram'] * 1000, -100))
+            signals['macd_signal'] = macd_signal
+            
+            # Bollinger Bands Signal
+            bb_position = (df['price'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
+            bb_signal = np.where(bb_position < 0.2, 100,  # Near lower band = Buy
+                        np.where(bb_position > 0.8, -100,  # Near upper band = Sell
+                                (0.5 - bb_position) * 200))  # Linear scaling
+            signals['bb_signal'] = bb_signal
+            
+            # EMA Trend Signal
+            ema_signal = np.where(df['ema_12'] > df['ema_26'], 
+                                 np.minimum((df['ema_12'] / df['ema_26'] - 1) * 10000, 100),
+                                 np.maximum((df['ema_12'] / df['ema_26'] - 1) * 10000, -100))
+            signals['ema_signal'] = ema_signal
+            
+            # Volume Signal
+            volume_signal = np.where(df['volume_ratio'] > 1.5, 50,
+                           np.where(df['volume_ratio'] < 0.5, -50, 0))
+            signals['volume_signal'] = volume_signal
+            
+            # Volatility Signal (alta volatilidad = precaución)
+            vol_percentile = df['volatility'].rolling(30).rank(pct=True)
+            volatility_signal = np.where(vol_percentile > 0.8, -30,
+                               np.where(vol_percentile < 0.2, 30, 0))
+            signals['volatility_signal'] = volatility_signal
+            
+            # Señal ponderada final
+            final_signal = (
+                signals['rsi_signal'] * self.weights['rsi'] +
+                signals['macd_signal'] * self.weights['macd'] +
+                signals['bb_signal'] * self.weights['bb'] +
+                signals['ema_signal'] * self.weights['ema'] +
+                signals['volume_signal'] * self.weights['volume'] +
+                signals['volatility_signal'] * self.weights['volatility']
+            )
+            
+            # Clasificar señales
+            signal_class = np.where(final_signal > 25, 'COMPRA',
+                           np.where(final_signal < -25, 'VENTA', 'NEUTRO'))
+            
+            # Nivel de confianza
+            confidence = np.minimum(np.abs(final_signal), 100)
+            
+            # Agregar al DataFrame original
+            df['final_signal'] = final_signal
+            df['signal_class'] = signal_class
+            df['confidence'] = confidence
+            
+            # Agregar señales individuales para análisis
+            for col in signals.columns:
+                df[col] = signals[col]
+                
+            return df
+            
+        except Exception as e:
+            st.error(f"Error generando señales: {str(e)}")
+            return None
 
-def display_metrics_breakdown(symbol, signal_data):
-    """Mostrar desglose de métricas"""
-    if not signal_data or 'metrics' not in signal_data:
-        return
-    
-    metrics = signal_data['metrics']
-    weights = MODEL_CONFIG['weights']
-    
-    # Crear DataFrame para mostrar
-    metrics_df = pd.DataFrame([
-        {'Métrica': 'RSI (14)', 'Valor': f"{metrics.get('rsi', 0):.2f}", 'Peso': f"{weights['rsi']*100:.1f}%"},
-        {'Métrica': 'MACD', 'Valor': f"{metrics.get('macd_signal', 0):.4f}", 'Peso': f"{weights['macd']*100:.1f}%"},
-        {'Métrica': 'Bollinger Bands', 'Valor': f"{metrics.get('bb_position', 0):.2f}", 'Peso': f"{weights['bb_position']*100:.1f}%"},
-        {'Métrica': 'VWAP', 'Valor': f"{metrics.get('vwap_signal', 0):.2f}", 'Peso': f"{weights['vwap']*100:.1f}%"},
-        {'Métrica': 'Stochastic %K', 'Valor': f"{metrics.get('stoch_k', 0):.2f}", 'Peso': f"{weights['stoch_k']*100:.1f}%"},
-        {'Métrica': 'OBV', 'Valor': f"{metrics.get('obv_signal', 0):.2f}", 'Peso': f"{weights['obv']*100:.1f}%"},
-        {'Métrica': 'ATR', 'Valor': f"{metrics.get('atr_signal', 0):.2f}", 'Peso': f"{weights['atr']*100:.1f}%"},
-        {'Métrica': 'ROC (14)', 'Valor': f"{metrics.get('roc', 0):.2f}", 'Peso': f"{weights['roc']*100:.1f}%"},
-    ])
-    
-    st.dataframe(metrics_df, use_container_width=True)
+    def create_summary_table(self, all_data):
+        """Crea tabla resumen con señales actuales"""
+        summary_data = []
+        
+        for coin_id in self.coins:
+            if coin_id in all_data and all_data[coin_id] is not None:
+                df = all_data[coin_id]
+                latest = df.iloc[-1]
+                
+                # Emoji para señal
+                signal_emoji = {
+                    'COMPRA': '🟢',
+                    'VENTA': '🔴',
+                    'NEUTRO': '⚪'
+                }.get(latest['signal_class'], '⚪')
+                
+                summary_data.append({
+                    'Crypto': self.coin_symbols[coin_id],
+                    'Precio': f"${latest['price']:,.2f}",
+                    'Señal': f"{signal_emoji} {latest['signal_class']}",
+                    'Score': f"{latest['final_signal']:.1f}",
+                    'Confianza': f"{latest['confidence']:.1f}%",
+                    'RSI': f"{latest['rsi']:.1f}",
+                    'MACD': f"{latest['macd']:.4f}",
+                    'BB Pos': f"{((latest['price'] - latest['bb_lower']) / (latest['bb_upper'] - latest['bb_lower']) * 100):.1f}%",
+                    'Vol Ratio': f"{latest['volume_ratio']:.2f}",
+                    'Volatilidad': f"{latest['volatility']:.1f}%"
+                })
+        
+        return pd.DataFrame(summary_data)
 
 def main():
-    """Función principal de la aplicación"""
+    st.title("🚀 Crypto Trading Signal Model")
+    st.markdown("**Modelo avanzado de señales de trading para criptomonedas**")
     
-    # Header
-    st.markdown('<h1 class="main-header">🚀 Crypto Trading Model</h1>', unsafe_allow_html=True)
-    st.markdown("---")
+    # Sidebar para configuración
+    st.sidebar.header("⚙️ Configuración")
     
-    # Sidebar
-    with st.sidebar:
-        st.header("⚙️ Configuración")
-        
-        # Información del modelo
-        st.subheader("Información del Modelo")
-        st.write(f"**Timeframe:** {MODEL_CONFIG['timeframe']}")
-        st.write(f"**Análisis cada:** {MODEL_CONFIG['analysis_frequency']}")
-        st.write(f"**Histórico:** {MODEL_CONFIG['historical_days']} días")
-        
-        # Umbrales
-        st.subheader("Umbrales de Señal")
-        st.write("🟢 **Compra:** Índice ≥ 65")
-        st.write("🟡 **Neutro:** 35 < Índice < 65")
-        st.write("🔴 **Venta:** Índice ≤ 35")
-        
-        # Botón de actualización manual
-        if st.button("🔄 Actualizar Datos", type="primary"):
-            st.cache_data.clear()
-            st.rerun()
-        
-        # Última actualización
-        st.write(f"**Última actualización:** {datetime.now().strftime('%H:%M:%S')}")
+    # Selector de días históricos
+    days = st.sidebar.slider("Días de datos históricos", 7, 90, 30)
     
-    # Contenido principal
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Dashboard", "📈 Análisis Detallado", "🔍 Backtesting", "ℹ️ Información"])
+    # Botón de actualización
+    if st.sidebar.button("🔄 Actualizar Datos", type="primary"):
+        st.cache_data.clear()
+        st.rerun()
     
-    with tab1:
-        st.header("Dashboard de Señales")
+    # Instanciar modelo
+    model = CryptoTradingModel()
+    
+    # Obtener datos para todas las criptomonedas
+    with st.spinner("Obteniendo datos de mercado..."):
+        all_data = {}
         
-        # Cargar datos
-        with st.spinner("Cargando datos de mercado..."):
-            data = load_crypto_data()
-        
-        if not data:
-            st.error("No se pudieron cargar los datos de mercado. Verifica la conectividad.")
-            return
-        
-        # Calcular señales
-        with st.spinner("Calculando señales de trading..."):
-            signals = calculate_signals(data)
-        
-        # Mostrar resumen
-        col1, col2, col3, col4 = st.columns(4)
-        
-        buy_signals = sum(1 for s in signals.values() if s and s['signal'] == 'COMPRA')
-        sell_signals = sum(1 for s in signals.values() if s and s['signal'] == 'VENTA')
-        neutral_signals = sum(1 for s in signals.values() if s and s['signal'] == 'NEUTRO')
-        
-        col1.metric("🟢 Señales de Compra", buy_signals)
-        col2.metric("🔴 Señales de Venta", sell_signals)
-        col3.metric("🟡 Señales Neutras", neutral_signals)
-        col4.metric("📊 Total Analizadas", len(signals))
-        
-        # Gráfico de índices
-        st.plotly_chart(create_index_chart(signals), use_container_width=True)
-        
-        # Tarjetas de señales
-        st.subheader("Señales Detalladas")
-        
-        cols = st.columns(2)
-        for i, (symbol, signal_data) in enumerate(signals.items()):
-            with cols[i % 2]:
-                with st.container():
-                    display_signal_card(symbol, signal_data)
+        for coin_id in model.coins:
+            with st.spinner(f"Procesando {model.coin_symbols[coin_id]}..."):
+                # Obtener datos
+                df = model.fetch_price_data(coin_id, days)
+                
+                if df is not None:
+                    # Calcular indicadores
+                    df = model.calculate_technical_indicators(df)
                     
-                    # Expandir para ver métricas
-                    with st.expander(f"Ver métricas de {symbol.upper()}"):
-                        display_metrics_breakdown(symbol, signal_data)
+                    if df is not None:
+                        # Generar señales
+                        df = model.generate_signals(df)
+                        all_data[coin_id] = df
     
-    with tab2:
-        st.header("Análisis Detallado")
+    if not all_data:
+        st.error("No se pudieron obtener datos de ninguna criptomoneda. Revisa tu conexión a internet.")
+        return
+    
+    # Mostrar tabla resumen
+    st.header("📊 Señales de Trading Actuales")
+    summary_df = model.create_summary_table(all_data)
+    
+    # Aplicar estilos a la tabla
+    def style_signal_table(df):
+        def color_signals(val):
+            if '🟢' in val:
+                return 'background-color: #d4edda; color: #155724'
+            elif '🔴' in val:
+                return 'background-color: #f8d7da; color: #721c24'
+            else:
+                return 'background-color: #f8f9fa; color: #495057'
         
-        selected_crypto = st.selectbox(
-            "Selecciona una criptomoneda para análisis detallado:",
-            options=list(CRYPTO_SYMBOLS),
-            format_func=lambda x: x.upper()
+        def color_score(val):
+            try:
+                score = float(val)
+                if score > 25:
+                    return 'background-color: #d4edda; color: #155724; font-weight: bold'
+                elif score < -25:
+                    return 'background-color: #f8d7da; color: #721c24; font-weight: bold'
+                else:
+                    return 'color: #495057'
+            except:
+                return ''
+        
+        return df.style.applymap(color_signals, subset=['Señal']).applymap(color_score, subset=['Score'])
+    
+    st.dataframe(style_signal_table(summary_df), use_container_width=True)
+    
+    # Mostrar última actualización
+    st.info(f"📅 Última actualización: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # Gráficos detallados
+    st.header("📈 Análisis Técnico Detallado")
+    
+    # Selector de criptomoneda para gráfico
+    selected_coin = st.selectbox(
+        "Selecciona criptomoneda para análisis detallado:",
+        options=list(model.coin_symbols.keys()),
+        format_func=lambda x: model.coin_symbols[x]
+    )
+    
+    if selected_coin in all_data:
+        df = all_data[selected_coin]
+        
+        # Crear subplots
+        fig = make_subplots(
+            rows=4, cols=1,
+            subplot_titles=(
+                f'{model.coin_symbols[selected_coin]} - Precio y Bollinger Bands',
+                'RSI',
+                'MACD', 
+                'Señal Final'
+            ),
+            vertical_spacing=0.08,
+            row_heights=[0.4, 0.2, 0.2, 0.2]
         )
         
-        if selected_crypto in data:
-            df = data[selected_crypto]
-            signal_data = signals.get(selected_crypto)
-            
-            if signal_data:
-                # Información de la señal
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Señal Actual", signal_data['signal'])
-                col2.metric("Índice", f"{signal_data['index']:.2f}")
-                col3.metric("Confianza", f"{signal_data['confidence']:.1f}%")
-                
-                # Gráfico de precio con indicadores
-                st.subheader("Gráfico de Precio e Indicadores")
-                
-                # Aquí podrías agregar gráficos más detallados
-                st.info("Gráficos detallados se implementarán en la siguiente iteración")
+        # Precio y Bollinger Bands
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df['price'],
+            name='Precio', line=dict(color='blue', width=2)
+        ), row=1, col=1)
+        
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df['bb_upper'],
+            name='BB Superior', line=dict(color='red', dash='dash')
+        ), row=1, col=1)
+        
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df['bb_lower'],
+            name='BB Inferior', line=dict(color='red', dash='dash'),
+            fill='tonexty', fillcolor='rgba(255,0,0,0.1)'
+        ), row=1, col=1)
+        
+        # RSI
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df['rsi'],
+            name='RSI', line=dict(color='purple')
+        ), row=2, col=1)
+        
+        fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
+        fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
+        
+        # MACD
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df['macd'],
+            name='MACD', line=dict(color='blue')
+        ), row=3, col=1)
+        
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df['macd_signal'],
+            name='Signal', line=dict(color='red')
+        ), row=3, col=1)
+        
+        # Señal Final
+        colors = ['red' if x < -25 else 'green' if x > 25 else 'gray' for x in df['final_signal']]
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df['final_signal'],
+            name='Señal Final', 
+            mode='markers+lines',
+            marker=dict(color=colors, size=6),
+            line=dict(color='black')
+        ), row=4, col=1)
+        
+        fig.add_hline(y=25, line_dash="dash", line_color="green", row=4, col=1)
+        fig.add_hline(y=-25, line_dash="dash", line_color="red", row=4, col=1)
+        
+        fig.update_layout(height=800, showlegend=True)
+        fig.update_xaxes(showgrid=True)
+        fig.update_yaxes(showgrid=True)
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Estadísticas adicionales
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                "Precio Actual", 
+                f"${df['price'].iloc[-1]:,.2f}",
+                delta=f"{((df['price'].iloc[-1] / df['price'].iloc[-2] - 1) * 100):.2f}%"
+            )
+        
+        with col2:
+            st.metric(
+                "Señal Score",
+                f"{df['final_signal'].iloc[-1]:.1f}",
+                delta=f"{(df['final_signal'].iloc[-1] - df['final_signal'].iloc[-2]):.1f}"
+            )
+        
+        with col3:
+            st.metric(
+                "RSI",
+                f"{df['rsi'].iloc[-1]:.1f}",
+                delta=f"{(df['rsi'].iloc[-1] - df['rsi'].iloc[-2]):.1f}"
+            )
+        
+        with col4:
+            st.metric(
+                "Volatilidad",
+                f"{df['volatility'].iloc[-1]:.1f}%",
+                delta=f"{(df['volatility'].iloc[-1] - df['volatility'].iloc[-2]):.1f}%"
+            )
     
-    with tab3:
-        st.header("Backtesting")
-        st.info("Funcionalidad de backtesting en desarrollo")
-        
-        # Placeholder para backtesting
-        st.write("Esta sección mostrará:")
-        st.write("- Rendimiento histórico del modelo")
-        st.write("- Estadísticas de aciertos")
-        st.write("- Curva de equity")
-        st.write("- Métricas de riesgo")
+    # Footer con información
+    st.markdown("---")
+    st.markdown("""
+    **📋 Metodología:**
+    - **RSI (20%)**: Identifica sobrecompra/sobreventa
+    - **MACD (25%)**: Detecta cambios de momentum
+    - **Bollinger Bands (15%)**: Señales de reversión por volatilidad
+    - **EMA Trend (20%)**: Confirma dirección de tendencia
+    - **Volumen (10%)**: Valida la fuerza del movimiento
+    - **Volatilidad (10%)**: Ajusta riesgo según condiciones de mercado
     
-    with tab4:
-        st.header("Información del Modelo")
-        
-        st.subheader("🎯 Objetivo")
-        st.write("""
-        Este modelo de trading combina múltiples indicadores técnicos para generar señales 
-        de compra, venta o mantener posición neutra en criptomonedas cada 6 horas.
-        """)
-        
-        st.subheader("📊 Métricas Utilizadas")
-        
-        weights = MODEL_CONFIG['weights']
-        
-        st.write("**Tier 1 - Alto Impacto:**")
-        st.write(f"- RSI (14): {weights['rsi']*100:.1f}% - Identificación de reversiones")
-        st.write(f"- MACD: {weights['macd']*100:.1f}% - Análisis de tendencias")
-        
-        st.write("**Tier 2 - Impacto Medio:**")
-        st.write(f"- Bollinger Bands: {weights['bb_position']*100:.1f}% - Volatilidad normalizada")
-        st.write(f"- VWAP: {weights['vwap']*100:.1f}% - Soporte/resistencia institucional")
-        st.write(f"- Stochastic %K: {weights['stoch_k']*100:.1f}% - Confirmación de momentum")
-        
-        st.write("**Tier 3 - Impacto Bajo:**")
-        st.write(f"- OBV: {weights['obv']*100:.1f}% - Flujo de dinero")
-        st.write(f"- ATR: {weights['atr']*100:.1f}% - Volatilidad")
-        st.write(f"- ROC: {weights['roc']*100:.1f}% - Momentum puro")
-        
-        st.subheader("⚡ Especificaciones Técnicas")
-        st.write(f"- **Frecuencia de análisis:** Cada 6 horas")
-        st.write(f"- **Criptomonedas:** {', '.join([c.upper() for c in CRYPTO_SYMBOLS])}")
-        st.write(f"- **Datos históricos:** {MODEL_CONFIG['historical_days']} días")
-        st.write(f"- **Fuente de datos:** CoinGecko API")
+    **⚠️ Disclaimer:** Este modelo es solo para fines educativos. No constituye asesoramiento financiero.
+    """)
 
 if __name__ == "__main__":
     main()
