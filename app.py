@@ -410,7 +410,14 @@ def main():
                 elif change < -8 and score > 5:
                     inconsistencies.append(f"{crypto}: Cambio negativo {change:.1f}% pero score positivo {score:.1f}")
             except:
-                pass Validación de Consistencia")
+                pass
+        
+        if inconsistencies:
+            st.error("❌ INCONSISTENCIAS DETECTADAS:")
+            for inconsistency in inconsistencies:
+                st.error(f"• {inconsistency}")
+        else:
+            st.success("✅ TODAS LAS SEÑALES SON CONSISTENTES - Modelo Mendoza confiable") Validación de Consistencia")
         
         inconsistencies = []
         for result in results:
