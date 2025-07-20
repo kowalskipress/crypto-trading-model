@@ -285,14 +285,20 @@ class RobustCryptoModel:
             return "⚪ NEUTRO", "Sin tendencia clara definida", "#6c757d"
 
 def main():
+    # IDENTIFICADOR DE VERSION - SIEMPRE VISIBLE
     st.title("📊 Robust Crypto Trading Model")
     st.markdown("**6 Métricas Clásicas - Enfoque en Tendencias Semanales**")
+    
+    # Marca de versión prominente
+    st.success("🔥 **VERSION ROBUSTA v2.0** | 6 Métricas Clásicas | Última actualización: 20/07/2025 22:00")
     
     model = RobustCryptoModel()
     
     # Sidebar con información del modelo
     st.sidebar.header("⚙️ Modelo de 6 Métricas")
+    st.sidebar.success("🔥 **VERSION ROBUSTA v2.0**")
     st.sidebar.markdown("**🎯 Enfoque: Análisis Técnico Clásico**")
+    st.sidebar.info("📅 Build: 20/07/2025 22:00 GMT-3")
     
     # Mostrar pesos
     st.sidebar.subheader("📊 Distribución de Pesos")
@@ -529,6 +535,7 @@ def main():
     
     # Footer metodológico
     st.markdown("---")
+    st.info("🔥 **ROBUST MODEL v2.0** - Build 20/07/2025 22:00 | 6 Métricas Clásicas Implementadas")
     st.markdown("""
     **🎯 Modelo Robusto de 6 Métricas - Metodología Completa:**
     
