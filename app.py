@@ -541,6 +541,9 @@ def main():
     
     **⚠️ Disclaimer:** Modelo para análisis técnico educativo. Todas las señales son consistentes lógicamente.
     """)
+    
+    **⚠️ Disclaimer:** Modelo para análisis técnico educativo. Todas las señales son consistentes lógicamente.
+    """)
 
 if __name__ == "__main__":
     main()
