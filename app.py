@@ -60,7 +60,7 @@ class SimpleCryptoModel:
                     return None
             elif response.status_code == 429:
                 st.warning("⏳ Límite de API alcanzado. Esperando...")
-                time.sleep(2)
+                time.sleep(5)  # Pausa más larga para rate limit
                 return None
             else:
                 st.warning(f"API Error {response.status_code} para {coin_id}")
@@ -203,18 +203,25 @@ def main():
     error_count = 0
     
     with st.spinner("Obteniendo datos de CoinGecko..."):
-        for coin_id, symbol in model.coins.items():
-            with st.spinner(f"Procesando {symbol}..."):
-                # Pequeña pausa entre requests
-                if results:  # No pausar en la primera request
-                    time.sleep(1)
+        for i, (coin_id, symbol) in enumerate(model.coins.items()):
+            with st.spinner(f"Procesando {symbol}... ({i+1}/4)"):
+                # Pausa progresiva entre requests para evitar rate limiting
+                if i > 0:
+                    time.sleep(2 + i)  # 2, 4, 6 segundos de pausa
                 
-                # Datos actuales
-                current_data = model.fetch_data(coin_id)
+                # Intentar hasta 3 veces por criptomoneda
+                current_data = None
+                for attempt in range(3):
+                    current_data = model.fetch_data(coin_id)
+                    if current_data is not None:
+                        break
+                    elif attempt < 2:  # No esperar en el último intento
+                        st.info(f"🔄 Reintentando {symbol}... (intento {attempt + 2}/3)")
+                        time.sleep(3)
                 
                 if current_data is None:
                     error_count += 1
-                    st.warning(f"❌ No se pudieron obtener datos para {symbol}")
+                    st.warning(f"❌ No se pudieron obtener datos para {symbol} después de 3 intentos")
                     continue
                 
                 # Datos históricos (intentar, pero no es crítico)
