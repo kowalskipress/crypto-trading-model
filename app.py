@@ -224,7 +224,7 @@ def main():
         # Botón de actualización manual
         if st.button("🔄 Actualizar Datos", type="primary"):
             st.cache_data.clear()
-            st.experimental_rerun()
+            st.rerun()
         
         # Última actualización
         st.write(f"**Última actualización:** {datetime.now().strftime('%H:%M:%S')}")
