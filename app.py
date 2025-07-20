@@ -13,6 +13,10 @@ st.set_page_config(
     layout="wide"
 )
 
+# Suprimir warnings innecesarios
+import warnings
+warnings.filterwarnings('ignore')
+
 class SimpleCryptoModel:
     def __init__(self):
         self.coins = {
