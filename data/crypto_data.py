@@ -29,7 +29,7 @@ class CryptoDataFetcher:
         
         # Rate limiting
         self.last_request_time = 0
-        self.min_request_interval = 1.1  # Segundos entre requests (rate limit)
+        self.min_request_interval = 3.0  # Segundos entre requests (rate limit)
     
     def _make_request(self, url: str, params: Dict = None) -> Optional[Dict]:
         """
