@@ -390,49 +390,8 @@ def main():
         else:
             st.success("✅ Todas las señales son consistentes - Modelo Salta confiable")
         
-        # Análisis de sectores
-        st.subheader("🔬 Análisis por Sectores")
-        
-        # Clasificar por sectores
-        sectors = {
-            'Store of Value': ['BTC'],
-            'Smart Contracts': ['ETH', 'ADA', 'SOL'],
-            'Exchange Tokens': ['BNB'],
-            'Payments': ['XRP'],
-            'Infrastructure': ['LINK'],
-            'Scaling Solutions': ['MATIC']
-        }
-        
-        sector_signals = {}
-        for sector, coins in sectors.items():
-            sector_results = [r for r in results if r['Crypto'] in coins]
-            if sector_results:
-                buy_count = sum(1 for r in sector_results if '🟢' in r['Señal'])
-                sell_count = sum(1 for r in sector_results if '🔴' in r['Señal'])
-                neutral_count = len(sector_results) - buy_count - sell_count
-                
-                if buy_count > sell_count:
-                    sentiment = "🟢 Alcista"
-                elif sell_count > buy_count:
-                    sentiment = "🔴 Bajista"
-                else:
-                    sentiment = "⚪ Neutro"
-                
-                sector_signals[sector] = {
-                    'sentiment': sentiment,
-                    'count': len(sector_results),
-                    'distribution': f"🟢{buy_count} 🔴{sell_count} ⚪{neutral_count}"
-                }
-        
-        # Mostrar análisis por sectores
-        cols = st.columns(min(len(sector_signals), 3))
-        for i, (sector, data) in enumerate(sector_signals.items()):
-            with cols[i % 3]:
-                st.metric(
-                    f"{sector}", 
-                    data['sentiment'], 
-                    delta=data['distribution']
-                )
+        # SECCIÓN DE ANÁLISIS POR SECTORES REMOVIDA COMPLETAMENTE
+        # Las líneas 329-379 del código original han sido eliminadas
         
         # Tabla de resultados
         df_results = pd.DataFrame(results)
