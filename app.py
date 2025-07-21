@@ -356,13 +356,13 @@ def main():
     if results:
         st.success(f"🌵 Análisis Salta completado para {len(results)}/{total_cryptos} criptomonedas")
         
-        # Análisis de diversificación
+        # Análisis de diversificación (simplificado)
         if len(results) >= 6:
-            st.success("✅ Portfolio diversificado - Múltiples sectores cubiertos")
+            st.success("✅ Portfolio diversificado obtenido")
         elif len(results) >= 4:
-            st.warning("⚠️ Diversificación parcial - Algunas cryptos fallaron")
+            st.warning("⚠️ Diversificación parcial conseguida")
         else:
-            st.error("❌ Diversificación insuficiente - Revisar conectividad")
+            st.error("❌ Diversificación insuficiente")
         
         # Validación de consistencia
         st.subheader("🛡️ Validación de Consistencia")
